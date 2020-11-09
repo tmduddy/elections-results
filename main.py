@@ -3,20 +3,25 @@ import json
 from datetime import datetime, timedelta
 from math import ceil, floor
 
+# get results from the 6x/minute updated politico results, bypassing the need for an AP elections API key
 resp = requests.get('https://www.politico.com/2020-national-results/president-overall.json').json()
 
+# load json that holds previous results
 with open('history.json', 'r') as f:
     history = json.load(f)
 
+# load file that contains mapping information to transalte the results json to useful numbers
+# {
+#   {{state_id}}: {
+#     state_name: {{2 letter state ID}},
+#     t_id: {{5 digit candidate ID for trump}},
+#     b_id: {{5 digit candidate ID for biden}}
+#   }, ...
+# }
 with open('state_info.json', 'r') as f:
     state_info = json.load(f)
 
-def print_update_time(resp):
-    last_updated = datetime.strptime(resp.get('lastUpdated'),'%Y-%m-%dT%H:%M:%S+00:00')
-    now = datetime.now() + timedelta(hours=5)
-
-    print(f'last updated: {ceil((now-last_updated).total_seconds()/60)} minute(s) ago')
-
+# given a state ID and the candidate ids, return the nummber of votes for each, whether that state has been called, and the percentage of votes received
 def get_votes(t_id, b_id, state):
     progress = state['progressPct']
     for candidate in state['candidates']:
@@ -26,6 +31,7 @@ def get_votes(t_id, b_id, state):
         elif candidate['candidateID'] == b_id:
             biden_votes = int(candidate['vote'])
             biden_win = bool(candidate['winner'])
+    
     result = {
         'progress': progress,
         'trump_votes': trump_votes,
@@ -35,12 +41,17 @@ def get_votes(t_id, b_id, state):
     }
     return result
 
-print_update_time(resp)
+# print out the last time that votes were received, converting the files date_stamp to a standard dt object 
+last_updated = datetime.strptime(resp.get('lastUpdated'),'%Y-%m-%dT%H:%M:%S+00:00')
+now = datetime.now() + timedelta(hours=5)
+print(f'last updated: {ceil((now-last_updated).total_seconds()/60)} minute(s) ago')
+
 
 race_dict = resp['races']
 for state in race_dict:
     state_id = state['stateFips']
     
+    # skip irrelevant states
     if state_id not in state_info.keys():
         continue
 
@@ -57,19 +68,27 @@ for state in race_dict:
         history[state_name]['margin'] = diff
         history[state_name]['updated'] = datetime.now().strftime(format='%Y-%m-%dT%H:%M:%S')
 
-
+    # convert date strings to datetime objects
     updated = datetime.strptime(history[state_name]['updated'],'%Y-%m-%dT%H:%M:%S')
     minutes_ago = floor((datetime.now()-updated).total_seconds()/60)
 
-    if result['biden_win'] or result['trump_win']:
-        winner = 'CALLED FOR BIDEN' if result['biden_win'] else 'CALLED FOR TRUMP'
+    if result['biden_win']:
+        status = 'CALLED FOR BIDEN'
+    elif result['trump_win']:
+        status = 'CALLED FOR TRUMP'
     else:
-        winner = 'Still Counting'
+        status = 'Still Counting'
 
-    if result['biden_votes'] > result['trump_votes']:
-        print(f'\n- {state_name} @ {result["progress"]}\n-- Biden by {"{:,d}".format(diff)}\n-- {winner}\n-- new votes {minutes_ago} minute(s) ago\n-- change: {"{:,d}".format(change)}')
-    else:
-        print(f'\n- {state_name} @ {result["progress"]}\n-- Trump by {"{:,d}".format(0-diff)}\n-- {winner}\n-- new votes {minutes_ago} minute(s) ago\n-- change: {"{:,d}".format(change)}')
-
+    leader_name = "Biden" if result['biden_votes'] > result['trump_votes'] else "Trump"
+    
+    print(
+        f'\n- {state_name} @ {result["progress"]}\n\
+        -- {leader_name} by {"{:,d}".format(abs(diff))}\n\
+        -- {status}\n\
+        -- new votes {minutes_ago} minute(s) ago\n\
+        -- change: {"{:,d}".format(change)}'
+    )
+    
+# store relevant results
 with open('history.json', 'w') as f:
     json.dump(history, f)
